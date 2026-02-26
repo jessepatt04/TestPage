@@ -73,24 +73,23 @@
         },
         layers: [
           new deck.HeatmapLayer({
-  id: 'heat',
-  data: points,
-  getPosition: d => d.position,
-  getWeight: d => d.weight ?? 1,
-  radiusPixels: 40,
-  intensity: 1,
-  threshold: 0.05,
-  colorRange: [
-    [  0,   0, 255,  80],  // cool (blue) - translucent
-    [  0, 128, 255, 120],
-    [  0, 255, 255, 160],
-    [  0, 255,   0, 200],
-    [255, 255,   0, 120],
-    [255,   0,   0,   0]   // hottest (red) - fully transparent
-  ],
-  opacity: 1               // keep global opacity; colorRange drives the effect
-})
-``
+            id: 'heat',
+            data: points,
+            getPosition: d => d.position,
+            getWeight: d => d.weight ?? 1,
+            radiusPixels: 40,
+            intensity: 1,
+            threshold: 0.05,
+            colorRange: [
+              [  0,   0, 255,  80],  // cool (blue) - translucent
+              [  0, 128, 255, 120],
+              [  0, 255, 255, 160],
+              [  0, 255,   0, 200],
+              [255, 255,   0, 120],
+              [255,   0,   0,   0]   // hottest (red) - fully transparent
+            ],
+            opacity: 1               // keep global opacity; colorRange drives the effect
+          })
         ]
       });
     });
@@ -98,4 +97,5 @@
 </body>
 
 </html>
+
 
