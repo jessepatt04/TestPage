@@ -86,7 +86,7 @@ app.get('/points', async (req, res) => {
       -- arrays are JSONB **strings**, so use _text extractor
       CROSS JOIN LATERAL jsonb_array_elements_text(d.${LONG}) WITH ORDINALITY AS lo(val, ord)
       CROSS JOIN LATERAL jsonb_array_elements_text(d.${LAT})  WITH ORDINALITY AS la(val, ord2)
-      WHERE lo.ord = la.ord
+      WHERE lo.ord = la.ord2
     )
     SELECT long, lat
     FROM pts
