@@ -65,7 +65,7 @@
       return [[minLng, minLat], [maxLng, maxLat]];
     }
 
-    async function fetchPointsNoBbox(limit = 100000) {
+    async function fetchPointsNoBbox(limit = 300000) {
       const url = new URL('/points', api);
       url.searchParams.set('limit', String(limit));
       console.log('[CLIENT] fetching', url.toString());
@@ -137,7 +137,7 @@
         layers: []
       });
 
-      const data = await fetchPointsNoBbox(100000);
+      const data = await fetchPointsNoBbox(300000);
 
       // If you have only a handful of points, heat can look flat at wide zoom.
       // Auto-fit the camera to your points.
