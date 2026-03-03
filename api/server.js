@@ -66,7 +66,6 @@ app.get('/health', async (req, res) => {
 app.get('/points', async (req, res) => {
   const { minLong, minLat, maxLong, maxLat, limit } = req.query;
 
-  // WHERE will apply on the numeric fields after extraction
   const clauses = [];
   const params = [];
 
@@ -84,10 +83,9 @@ app.get('/points', async (req, res) => {
         (lo.val)::float AS long,
         (la.val)::float AS lat
       FROM ${TABLE} d
-      -- arrays contain STRINGS, so use _text extractor
       CROSS JOIN LATERAL jsonb_array_elements_text(d.${LONG}) WITH ORDINALITY AS lo(val, ord)
       CROSS JOIN LATERAL jsonb_array_elements_text(d.${LAT})  WITH ORDINALITY AS la(val, ord2)
-      WHERE lo.ord = la.ord
+      WHERE lo.ord = la.ord2
     )
     SELECT long, lat
     FROM pts
@@ -95,24 +93,34 @@ app.get('/points', async (req, res) => {
     ${lim};
   `;
 
+  console.log("------------------------------------------------");
+  console.log("[API] Incoming request");
+  console.log("[API] SQL:", sql.replace(/\s+/g, " ").trim());
+  console.log("[API] Params:", params);
+
   try {
-    // TEMP: debug logging—remove once verified
-    console.log('[API] SQL:', sql.replace(/\s+/g, ' ').trim());
-    console.log('[API] Params:', params);
-
     const result = await pool.query(sql, params);
-    console.log('[API] rows:', result.rowCount, ' sample:', result.rows[0]);
+    console.log("[API] Returned rows:", result.rows.length);
+    console.log("[API] First row:", result.rows[0]);
 
-    const data = result.rows.map(r => ({
-      position: [r.long, r.lat]   // already numeric
-    }));
-    res.json(data);
+    // Show all numeric conversions
+    const mapped = result.rows.map((r, i) => {
+      const lng = Number(r.long);
+      const lat = Number(r.lat);
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+        console.log(`[API] BAD ROW (${i}):`, r);
+      }
+      return { position: [lng, lat] };
+    });
+
+    console.log("[API] First mapped row:", mapped[0]);
+    res.json(mapped);
+
   } catch (err) {
-    console.error('[API] Error querying points:', err);
-    res.status(500).json({ error: 'DB query failed', detail: String(err) });
+    console.error("[API] ERROR:", err);
+    res.status(500).json({ error: "DB query failed", detail: String(err) });
   }
 });
-
 
 // Fallback
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
