@@ -66,59 +66,78 @@ app.get('/health', async (req, res) => {
 app.get('/points', async (req, res) => {
   const { minLong, minLat, maxLong, maxLat, limit } = req.query;
 
-  const clauses = [];
-  const params = [];
-
+  // Build WHERE dynamically; apply on numeric fields after extraction
+  const whereParams = [];
+  let whereClause = '';
   if ([minLong, minLat, maxLong, maxLat].every(v => v !== undefined)) {
-    clauses.push(`long BETWEEN $1 AND $3 AND lat BETWEEN $2 AND $4`);
-    params.push(Number(minLong), Number(minLat), Number(maxLong), Number(maxLat));
+    whereClause = `WHERE long BETWEEN $1 AND $3 AND lat BETWEEN $2 AND $4`;
+    whereParams.push(Number(minLong), Number(minLat), Number(maxLong), Number(maxLat));
   }
 
-  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
-  const lim = Number(limit) > 0 && Number(limit) <= 100000 ? `LIMIT ${Number(limit)}` : '';
+  const lim =
+    Number(limit) > 0 && Number(limit) <= 100000 ? `LIMIT ${Number(limit)}` : '';
 
+  // Robust extraction:
+  // - arrays are JSONB strings -> use jsonb_array_elements_text
+  // - trim whitespace
+  // - keep only values that look like numbers via regex
+  // - cast to float
   const sql = `
-    WITH pts AS (
+    WITH exploded AS (
       SELECT
-        (lo.val)::float AS long,
-        (la.val)::float AS lat
+        lo.ord,
+        trim(lo.val) AS long_txt,
+        trim(la.val) AS lat_txt
       FROM ${TABLE} d
       CROSS JOIN LATERAL jsonb_array_elements_text(d.${LONG}) WITH ORDINALITY AS lo(val, ord)
-      CROSS JOIN LATERAL jsonb_array_elements_text(d.${LAT})  WITH ORDINALITY AS la(val, ord2)
-      WHERE lo.ord = la.ord2
+      CROSS JOIN LATERAL jsonb_array_elements_text(d.${LAT})  WITH ORDINALITY AS la(val, ord)
+      WHERE lo.ord = la.ord                      -- zip long[i] with lat[i]
+    ),
+    cleaned AS (
+      SELECT
+        long_txt,
+        lat_txt
+      FROM exploded
+      WHERE long_txt ~ '^[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)$'
+        AND lat_txt  ~ '^[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)$'
+    ),
+    pts AS (
+      SELECT
+        long_txt::float AS long,
+        lat_txt::float  AS lat
+      FROM cleaned
     )
     SELECT long, lat
-    FROM pts;
+    FROM pts
+    ${whereClause}
+    ${lim};
   `;
 
-  console.log("------------------------------------------------");
-  console.log("[API] Incoming request");
-  console.log("[API] SQL:", sql.replace(/\s+/g, " ").trim());
-  console.log("[API] Params:", params);
+  // --- TEMP: debug logging; remove once verified ---
+  console.log('------------------------------------------------');
+  console.log('[API] /points');
+  console.log('[API] SQL:', sql.replace(/\s+/g, ' ').trim());
+  console.log('[API] Params:', whereParams);
 
   try {
-    const result = await pool.query(sql, params);
-    console.log("[API] Returned rows:", result.rows.length);
-    console.log("[API] First row:", result.rows[0]);
+    const result = await pool.query(sql, whereParams);
 
-    // Show all numeric conversions
-    const mapped = result.rows.map((r, i) => {
-      const lng = Number(r.long);
-      const lat = Number(r.lat);
-      if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
-        console.log(`[API] BAD ROW (${i}):`, r);
-      }
-      return { position: [lng, lat] };
-    });
+    console.log('[API] rows:', result.rowCount, ' sample row:', result.rows[0]);
 
-    console.log("[API] First mapped row:", mapped[0]);
-    res.json(mapped);
+    // Avoid NaN/null in JSON: drop any non-finite values (paranoia)
+    const data = result.rows
+      .map(r => [Number(r.long), Number(r.lat)])
+      .filter(([lng, lat]) => Number.isFinite(lng) && Number.isFinite(lat))
+      .map(([lng, lat]) => ({ position: [lng, lat] }));
 
+    console.log('[API] first mapped:', data[0]);
+    res.json(data);
   } catch (err) {
-    console.error("[API] ERROR:", err);
-    res.status(500).json({ error: "DB query failed", detail: String(err) });
+    console.error('[API] ERROR:', err);
+    res.status(500).json({ error: 'DB query failed', detail: String(err) });
   }
 });
+``
 
 // Fallback
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
