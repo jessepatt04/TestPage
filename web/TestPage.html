@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Heatmap - MapLibre + deck.gl</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>html, body, #map { height: 100%; margin: 0; }</style>
+    <!-- MapLibre + deck.gl (no keys) -->
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.css">
+    <script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"></script>
+    <script src="https://unpkg.com/deck.gl@8.9.36/dist.min.js"></script>
+    <script src="https://unpkg.com/@deck.gl/mapbox@8.9.36/dist.min.js"></script>
+</head>
+<body>
+<div id="map"></div>
+<canvas id="deck-canvas" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none;"></canvas>
+
+<script>
+    // --- read hash parameters (#lat=-26.2&lng=28.04&zoom=12&points=BASE64) ---
+    function getParams() {
+      const params = new URLSearchParams(location.hash.slice(1));
+      const lat = parseFloat(params.get('lat')) || -26.2041;
+      const lng = parseFloat(params.get('lng')) || 28.0473;
+      const zoom = parseFloat(params.get('zoom')) || 12;
+      let points = [
+        {position:[28.0473, -26.2041], weight:1},
+        {position:[28.0540, -26.2050], weight:2},
+        {position:[28.0600, -26.2100], weight:0.5}
+      ];
+      const p = params.get('points');
+      if (p) {
+        try {
+          const json = atob(p);
+          points = JSON.parse(json);
+        } catch(e) { console.warn('Invalid points payload', e); }
+      }
+      return { lat, lng, zoom, points };
+    }
+
+    const { lat, lng, zoom, points } = getParams();
+
+    // --- MapLibre using free OSM raster tiles (OK for dev; pick a provider for prod) ---
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: {
+        version: 8,
+        sources: {
+          osm: {
+            type: 'raster',
+            tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png'],
+            tileSize: 256,
+            attribution: '© OpenStreetMap contributors'
+          }
+        },
+        layers: [{ id: 'osm', type: 'raster', source: 'osm' }]
+      },
+      center: [lng, lat],
+      zoom
+    });
+
+    map.on('load', () => {
+      const deckgl = new deck.DeckGL({
+        canvas: 'deck-canvas',
+        controller: true,
+        initialViewState: { longitude: lng, latitude: lat, zoom },
+        onViewStateChange: ({viewState}) => {
+          map.jumpTo({
+            center: [viewState.longitude, viewState.latitude],
+            zoom: viewState.zoom,
+            bearing: viewState.bearing,
+            pitch: viewState.pitch
+          });
+        },
+        layers: [
+          new deck.HeatmapLayer({
+            id: 'heat',
+            data: points,
+            getPosition: d => d.position, // [lng, lat]
+            getWeight: d => d.weight ?? 1,
+            radiusPixels: 40,
+            intensity: 1,
+            threshold: 0.05
+            opacity: 0.45
+          })
+        ]
+      });
+    });
+</script>
+</body>
+</html>

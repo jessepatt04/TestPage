@@ -1,0 +1,28 @@
+
+version: "3.9"
+services:
+  api:
+    build: ./api
+    container_name: heatmap-api
+    ports:
+      - "3000:3000"
+    environment:
+      # --- Database connection ---
+      PGHOST: ${PGHOST:-host.docker.internal}
+      PGPORT: ${PGPORT:-5432}
+      PGDATABASE: ${PGDATABASE:-postgres}
+      PGUSER: ${PGUSER:-jesse}
+      PGPASSWORD: ${PGPASSWORD:-jesse}
+      # --- App settings ---
+      PORT: 3000
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      TABLE_NAME: ${TABLE_NAME:-public.dexter}
+      LAT_COLUMN: ${LAT_COLUMN:-lat}
+      LONG_COLUMN: ${LONG_COLUMN:-long}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
