@@ -16,11 +16,11 @@
 <canvas id="deck-canvas" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none;"></canvas>
 
 <script>
-    // --- read hash parameters (#lat=-26.2&lng=28.04&zoom=12&points=BASE64) ---
+    // --- read hash parameters (#lat=-26.2&long=28.04&zoom=12&points=BASE64) ---
     function getParams() {
       const params = new URLSearchParams(location.hash.slice(1));
       const lat = parseFloat(params.get('lat')) || -26.2041;
-      const lng = parseFloat(params.get('lng')) || 28.0473;
+      const long = parseFloat(params.get('long')) || 28.0473;
       const zoom = parseFloat(params.get('zoom')) || 12;
       let points = [
         {position:[28.0473, -26.2041], weight:1},
@@ -34,10 +34,10 @@
           points = JSON.parse(json);
         } catch(e) { console.warn('Invalid points payload', e); }
       }
-      return { lat, lng, zoom, points };
+      return { lat, long, zoom, points };
     }
 
-    const { lat, lng, zoom, points } = getParams();
+    const { lat, long, zoom, points } = getParams();
 
     // --- MapLibre using free OSM raster tiles (OK for dev; pick a provider for prod) ---
     const map = new maplibregl.Map({
@@ -54,7 +54,7 @@
         },
         layers: [{ id: 'osm', type: 'raster', source: 'osm' }]
       },
-      center: [lng, lat],
+      center: [long, lat],
       zoom
     });
 
@@ -62,7 +62,7 @@
       const deckgl = new deck.DeckGL({
         canvas: 'deck-canvas',
         controller: true,
-        initialViewState: { longitude: lng, latitude: lat, zoom },
+        initialViewState: { longitude: long, latitude: lat, zoom },
         onViewStateChange: ({viewState}) => {
           map.jumpTo({
             center: [viewState.longitude, viewState.latitude],
@@ -75,11 +75,11 @@
           new deck.HeatmapLayer({
             id: 'heat',
             data: points,
-            getPosition: d => d.position, // [lng, lat]
+            getPosition: d => d.position, // [long, lat]
             getWeight: d => d.weight ?? 1,
             radiusPixels: 40,
             intensity: 1,
-            threshold: 0.05
+            threshold: 0.05,
             opacity: 0.45
           })
         ]
