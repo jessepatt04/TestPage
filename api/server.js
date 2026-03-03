@@ -61,11 +61,12 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// GET /points?minLng=&minLat=&maxLng=&maxLat=&limit=
+// server.js (inside app.get('/points', ...))
+
 app.get('/points', async (req, res) => {
   const { minLong, minLat, maxLong, maxLat, limit } = req.query;
 
-  // Build WHERE dynamically if bbox provided (apply WHERE on numeric fields)
+  // WHERE will apply on the numeric fields after extraction
   const clauses = [];
   const params = [];
 
@@ -83,10 +84,10 @@ app.get('/points', async (req, res) => {
         (lo.val)::float AS long,
         (la.val)::float AS lat
       FROM ${TABLE} d
-      -- arrays are JSONB **strings**, so use _text extractor
+      -- arrays contain STRINGS, so use _text extractor
       CROSS JOIN LATERAL jsonb_array_elements_text(d.${LONG}) WITH ORDINALITY AS lo(val, ord)
       CROSS JOIN LATERAL jsonb_array_elements_text(d.${LAT})  WITH ORDINALITY AS la(val, ord2)
-      WHERE lo.ord = la.ord2
+      WHERE lo.ord = la.ord
     )
     SELECT long, lat
     FROM pts
@@ -94,20 +95,23 @@ app.get('/points', async (req, res) => {
     ${lim};
   `;
 
-  const result = await pool.query(sql, params);
-  const data = result.rows.map(r => ({ position: [Number(r.long), Number(r.lat)] }));
-  res.json(data);
-
   try {
+    // TEMP: debug logging—remove once verified
+    console.log('[API] SQL:', sql.replace(/\s+/g, ' ').trim());
+    console.log('[API] Params:', params);
+
     const result = await pool.query(sql, params);
+    console.log('[API] rows:', result.rowCount, ' sample:', result.rows[0]);
+
     const data = result.rows.map(r => ({
-      position: [Number(r.long), Number(r.lat)]
+      position: [r.long, r.lat]   // already numeric
     }));
     res.json(data);
   } catch (err) {
-    console.error('Error querying points:', err);
+    console.error('[API] Error querying points:', err);
     res.status(500).json({ error: 'DB query failed', detail: String(err) });
   }
+});
 
 
 // Fallback
