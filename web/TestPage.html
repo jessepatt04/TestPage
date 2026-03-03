@@ -17,26 +17,17 @@
 <canvas id="deck-canvas" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none;"></canvas>
 
 <script>
-    // --- Utility: read #hash params ---
     function getParams() {
       const params = new URLSearchParams(location.hash.slice(1));
       const lat = parseFloat(params.get('lat')) || -26.2041;
       const lng = parseFloat(params.get('lng')) || 28.0473;
       const zoom = parseFloat(params.get('zoom')) || 12;
-      const api = params.get('api') || 'http://localhost:3000'; // For GitHub Pages, use an HTTPS API endpoint
-      let points = [
-        {position:[28.0473, -26.2041], weight:1}
-      ];
-      const p = params.get('points');
-      if (p) {
-        try { points = JSON.parse(atob(p)); } catch(e) { console.warn('Invalid points payload', e); }
-      }
-      return { lat, lng, zoom, api, points };
+      const api = params.get('api') || 'http://localhost:3000'; // Use HTTPS for GitHub Pages
+      return { lat, lng, zoom, api };
     }
 
-    const { lat, lng, zoom, api, points: hardcodedPoints } = getParams();
+    const { lat, lng, zoom, api } = getParams();
 
-    // --- MapLibre with OSM raster ---
     const map = new maplibregl.Map({
       container: 'map',
       style: {
@@ -57,92 +48,83 @@
 
     let deckgl;
 
-    function setLayers(data, showDebugDots = false) {
+    // Helper: compute bounds from [{position:[lng,lat]}]
+    function getBoundsFromPoints(data) {
+      let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+      for (const d of data) {
+        const p = d && d.position;
+        if (!p || p.length !== 2) continue;
+        const [x, y] = p.map(Number);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+        if (x < minLng) minLng = x;
+        if (x > maxLng) maxLng = x;
+        if (y < minLat) minLat = y;
+        if (y > maxLat) maxLat = y;
+      }
+      if (!Number.isFinite(minLng)) return null;
+      return [[minLng, minLat], [maxLng, maxLat]];
+    }
+
+    async function fetchPointsNoBbox(limit = 100000) {
+      const url = new URL('/points', api);
+      url.searchParams.set('limit', String(limit));
+      console.log('[CLIENT] fetching', url.toString());
+      const resp = await fetch(url.toString(), { mode: 'cors' });
+      console.log('[CLIENT] status', resp.status);
+      if (!resp.ok) throw new Error(`API ${resp.status}`);
+      const arr = await resp.json();
+      console.log('[CLIENT] points received:', Array.isArray(arr) ? arr.length : typeof arr, arr[0]);
+
+      // Hard validation of positions
+      const bad = arr.filter(d => !d || !Array.isArray(d.position) || d.position.length !== 2 ||
+        !Number.isFinite(+d.position[0]) || !Number.isFinite(+d.position[1]));
+      if (bad.length) {
+        console.warn('[CLIENT] invalid positions found, sample:', bad.slice(0, 3));
+      }
+      return arr;
+    }
+
+    function setLayers(data) {
       const layers = [
         new deck.HeatmapLayer({
           id: 'heat',
           data,
-          getPosition: d => d.position, // [lng, lat]
-          getWeight: d => d.weight ?? 1,
-          radiusPixels: 50,      // slightly larger for visibility
-          intensity: 1.2,        // bump intensity a bit
-          threshold: 0.03,       // lower threshold so faint clusters show
-          opacity: 0.5
+          getPosition: d => d.position,     // expects [lng, lat]
+          getWeight: d => d.weight ?? 1,    // default weight
+          radiusPixels: 70,                  // larger radius shows heat sooner
+          intensity: 1.5,                    // stronger heat
+          threshold: 0.01,                   // lower threshold reveals more
+          opacity: 0.6,
+          colorRange: [
+            [33,102,172,80],
+            [67,147,195,160],
+            [146,197,222,200],
+            [209,229,240,220],
+            [253,219,199,240],
+            [244,165,130,255],
+            [214,96,77,255],
+            [178,24,43,255]
+          ],
+          // gpuAggregation: true,          // you can toggle this; depends on device
+        }),
+        new deck.ScatterplotLayer({
+          id: 'debug-points',
+          data,
+          getPosition: d => d.position,
+          getRadius: 25,
+          radiusMinPixels: 2,
+          getFillColor: [0, 128, 255, 200]
         })
       ];
-
-      if (showDebugDots) {
-        layers.push(
-          new deck.ScatterplotLayer({
-            id: 'debug-points',
-            data,
-            getPosition: d => d.position,
-            getRadius: 20,
-            radiusMinPixels: 2,
-            getFillColor: [0, 128, 255, 160]
-          })
-        );
-      }
-
       deckgl.setProps({ layers });
-    }
-
-    function getBoundsFromPoints(data) {
-      if (!data || !data.length) return null;
-      let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
-      for (const d of data) {
-        const [x, y] = d.position || [];
-        if (Number.isFinite(x) && Number.isFinite(y)) {
-          if (x < minLng) minLng = x;
-          if (x > maxLng) maxLng = x;
-          if (y < minLat) minLat = y;
-          if (y > maxLat) maxLat = y;
-        }
-      }
-      if (!Number.isFinite(minLng) || !Number.isFinite(minLat) || !Number.isFinite(maxLng) || !Number.isFinite(maxLat)) {
-        return null;
-      }
-      return [[minLng, minLat], [maxLng, maxLat]];
-    }
-
-    // Fetch points from API. If useBounds=true, include current map bbox in query
-    async function fetchPoints({useBounds = true, limit = 10000} = {}) {
-      try {
-        let url = new URL('/points', api);
-        if (useBounds && map && map.getBounds) {
-          const b = map.getBounds();
-          // Server expects: minLong, minLat, maxLong, maxLat
-          url.searchParams.set('minLong', b.getWest());
-          url.searchParams.set('minLat',  b.getSouth());
-          url.searchParams.set('maxLong', b.getEast());
-          url.searchParams.set('maxLat',  b.getNorth());
-        }
-        url.searchParams.set('limit', String(limit));
-        const resp = await fetch(url.toString(), { mode: 'cors' });
-        if (!resp.ok) throw new Error(`API ${resp.status}`);
-        const arr = await resp.json();
-        if (!Array.isArray(arr)) throw new Error('Bad payload');
-        return arr;
-      } catch (e) {
-        console.warn('API fetch failed, falling back to hardcoded points', e);
-        return hardcodedPoints;
-      }
-    }
-
-    // Simple debounce
-    function debounce(fn, wait=300) {
-      let t;
-      return (...args) => {
-        clearTimeout(t);
-        t = setTimeout(() => fn(...args), wait);
-      };
     }
 
     map.on('load', async () => {
       deckgl = new deck.DeckGL({
         canvas: 'deck-canvas',
         controller: true,
-        initialViewState: { longitude: lng, latitude: lat, zoom },
+        // Ensure the canvas is drawn crisp and above the map
+        useDevicePixels: window.devicePixelRatio || 1,
         onViewStateChange: ({viewState}) => {
           map.jumpTo({
             center: [viewState.longitude, viewState.latitude],
@@ -151,37 +133,23 @@
             pitch: viewState.pitch
           });
         },
+        initialViewState: { longitude: lng, latitude: lat, zoom },
         layers: []
       });
 
-      // 1) First fetch WITHOUT bbox so we get the global dataset
-      const initialData = await fetchPoints({useBounds: false});
-      if (initialData.length === 0) {
-        console.warn('No data returned from API (or fallback).');
-      }
-      setLayers(initialData, /*showDebugDots=*/false);
+      const data = await fetchPointsNoBbox(100000);
 
-      // 2) Fit map to data bounds
-      const bounds = getBoundsFromPoints(initialData);
+      // If you have only a handful of points, heat can look flat at wide zoom.
+      // Auto-fit the camera to your points.
+      const bounds = getBoundsFromPoints(data);
       if (bounds) {
-        // Fit the MapLibre map
-        map.fitBounds(bounds, { padding: 60, animate: true, duration: 800 });
-        // Also sync the deck view (optional, but feels snappier)
-        const [[minLng, minLat], [maxLng, maxLat]] = bounds;
-        const centerLng = (minLng + maxLng) / 2;
-        const centerLat = (minLat + maxLat) / 2;
-        deckgl.setProps({
-          viewState: { longitude: centerLng, latitude: centerLat, zoom: map.getZoom(), bearing: 0, pitch: 0 }
-        });
+        console.log('[CLIENT] fitting to bounds', bounds);
+        map.fitBounds(bounds, { padding: 80, animate: true, duration: 800 });
+      } else {
+        console.warn('[CLIENT] No bounds computed; data may be empty or invalid');
       }
 
-      // 3) Now that the camera is over the data, refresh on move with bbox
-      const refresh = debounce(async () => {
-        const d = await fetchPoints({useBounds: true});
-        setLayers(d, /*showDebugDots=*/false);
-      }, 350);
-
-      map.on('moveend', refresh);
+      setLayers(data);
     });
 </script>
 </body>

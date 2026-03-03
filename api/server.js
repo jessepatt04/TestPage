@@ -66,67 +66,58 @@ app.get('/health', async (req, res) => {
 app.get('/points', async (req, res) => {
   const { minLong, minLat, maxLong, maxLat, limit } = req.query;
 
-  // Build WHERE dynamically; apply on numeric fields after extraction
-  const whereParams = [];
+  const params = [];
   let whereClause = '';
   if ([minLong, minLat, maxLong, maxLat].every(v => v !== undefined)) {
-    whereClause = `WHERE long BETWEEN $1 AND $3 AND lat BETWEEN $2 AND $4`;
-    whereParams.push(Number(minLong), Number(minLat), Number(maxLong), Number(maxLat));
+    whereClause = `WHERE lng BETWEEN $1 AND $3 AND lat BETWEEN $2 AND $4`;
+    params.push(Number(minLong), Number(minLat), Number(maxLong), Number(maxLat));
   }
 
   const lim =
     Number(limit) > 0 && Number(limit) <= 100000 ? `LIMIT ${Number(limit)}` : '';
 
-  // Robust extraction:
-  // - arrays are JSONB strings -> use jsonb_array_elements_text
-  // - trim whitespace
-  // - keep only values that look like numbers via regex
-  // - cast to float
   const sql = `
     WITH exploded AS (
       SELECT
         lo.ord,
-        trim(lo.val) AS long_txt,
+        trim(lo.val) AS lng_txt,
         trim(la.val) AS lat_txt
       FROM ${TABLE} d
       CROSS JOIN LATERAL jsonb_array_elements_text(d.${LONG}) WITH ORDINALITY AS lo(val, ord)
       CROSS JOIN LATERAL jsonb_array_elements_text(d.${LAT})  WITH ORDINALITY AS la(val, ord)
-      WHERE lo.ord = la.ord                      -- zip long[i] with lat[i]
+      WHERE lo.ord = la.ord
     ),
     cleaned AS (
       SELECT
-        long_txt,
-        lat_txt
+        lng_txt, lat_txt
       FROM exploded
-      WHERE long_txt ~ '^[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)$'
-        AND lat_txt  ~ '^[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)$'
+      WHERE lng_txt ~ '^[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)$'
+        AND lat_txt ~ '^[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)$'
     ),
     pts AS (
       SELECT
-        long_txt::float AS long,
-        lat_txt::float  AS lat
+        lng_txt::double precision AS lng,
+        lat_txt::double precision AS lat
       FROM cleaned
     )
-    SELECT long, lat
+    SELECT lng, lat
     FROM pts
     ${whereClause}
     ${lim};
   `;
 
-  // --- TEMP: debug logging; remove once verified ---
+  // Debug logging
   console.log('------------------------------------------------');
   console.log('[API] /points');
   console.log('[API] SQL:', sql.replace(/\s+/g, ' ').trim());
-  console.log('[API] Params:', whereParams);
+  console.log('[API] Params:', params);
 
   try {
-    const result = await pool.query(sql, whereParams);
-
+    const result = await pool.query(sql, params);
     console.log('[API] rows:', result.rowCount, ' sample row:', result.rows[0]);
 
-    // Avoid NaN/null in JSON: drop any non-finite values (paranoia)
     const data = result.rows
-      .map(r => [Number(r.long), Number(r.lat)])
+      .map(r => [Number(r.lng), Number(r.lat)])
       .filter(([lng, lat]) => Number.isFinite(lng) && Number.isFinite(lat))
       .map(([lng, lat]) => ({ position: [lng, lat] }));
 
@@ -137,7 +128,6 @@ app.get('/points', async (req, res) => {
     res.status(500).json({ error: 'DB query failed', detail: String(err) });
   }
 });
-``
 
 // Fallback
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
