@@ -25,9 +25,7 @@
       const zoom = parseFloat(params.get('zoom')) || 12;
       const api = params.get('api') || 'http://localhost:3000'; // For GitHub Pages, use an HTTPS API endpoint
       let points = [
-        {position:[28.0473, -26.2041], weight:1},
-        {position:[28.0540, -26.2050], weight:2},
-        {position:[28.0600, -26.2100], weight:0.5}
+        {position:[28.0473, -26.2041], weight:1}
       ];
       const p = params.get('points');
       if (p) {
