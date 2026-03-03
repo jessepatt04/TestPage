@@ -1,147 +1,190 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Heatmap - MapLibre + deck.gl</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>html, body, #map { height: 100%; margin: 0; }</style>
+    <meta charset="utf-8" />
+    <title>Heatmap - MapLibre + deck.gl</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>html, body, #map { height: 100%; margin: 0; }</style>
 
-  <!-- If you serve this page via HTTPS (e.g., GitHub Pages), mixed HTTP requests will be blocked.
-       You need your API to be reachable over HTTPS too (e.g., ngrok). -->
-
-  <!-- MapLibre + deck.gl (no keys) -->
-  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.css">
-  <script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"></script>
-  <script src="https://unpkg.com/deck.gl@8.9.36/dist.min.js"></script>
-  <script src="https://unpkg.com/@deck.gl/mapbox@8.9.36/dist.min.js"></script>
+    <!-- MapLibre + deck.gl (no keys) -->
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.css">
+    <script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"></script>
+    <script src="https://unpkg.com/deck.gl@8.9.36/dist.min.js"></script>
+    <script src="https://unpkg.com/@deck.gl/mapbox@8.9.36/dist.min.js"></script>
 </head>
 <body>
 <div id="map"></div>
 <canvas id="deck-canvas" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none;"></canvas>
 
 <script>
-  // --- Utility: read #hash params ---
-  function getParams() {
-    const params = new URLSearchParams(location.hash.slice(1));
-    const lat = parseFloat(params.get('lat')) || -26.2041;
-    const lng = parseFloat(params.get('lng')) || 28.0473;
-    const zoom = parseFloat(params.get('zoom')) || 12;
-    const api = params.get('api') || 'http://localhost:3000'; // IMPORTANT: Use https endpoint for GitHub Pages
-    let points = [
-      {position:[28.0473, -26.2041], weight:1},
-      {position:[28.0540, -26.2050], weight:2},
-      {position:[28.0600, -26.2100], weight:0.5}
-    ];
-    const p = params.get('points');
-    if (p) {
-      try {
-        const json = atob(p);
-        points = JSON.parse(json);
-      } catch(e) { console.warn('Invalid points payload', e); }
+    // --- Utility: read #hash params ---
+    function getParams() {
+      const params = new URLSearchParams(location.hash.slice(1));
+      const lat = parseFloat(params.get('lat')) || -26.2041;
+      const lng = parseFloat(params.get('lng')) || 28.0473;
+      const zoom = parseFloat(params.get('zoom')) || 12;
+      const api = params.get('api') || 'http://localhost:3000'; // For GitHub Pages, use an HTTPS API endpoint
+      let points = [
+        {position:[28.0473, -26.2041], weight:1},
+        {position:[28.0540, -26.2050], weight:2},
+        {position:[28.0600, -26.2100], weight:0.5}
+      ];
+      const p = params.get('points');
+      if (p) {
+        try { points = JSON.parse(atob(p)); } catch(e) { console.warn('Invalid points payload', e); }
+      }
+      return { lat, lng, zoom, api, points };
     }
-    return { lat, lng, zoom, api, points };
-  }
 
-  const { lat, lng, zoom, api, points: hardcodedPoints } = getParams();
+    const { lat, lng, zoom, api, points: hardcodedPoints } = getParams();
 
-  // --- MapLibre with OSM raster ---
-  const map = new maplibregl.Map({
-    container: 'map',
-    style: {
-      version: 8,
-      sources: {
-        osm: {
-          type: 'raster',
-          tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png'],
-          tileSize: 256,
-          attribution: '© OpenStreetMap contributors'
-        }
+    // --- MapLibre with OSM raster ---
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: {
+        version: 8,
+        sources: {
+          osm: {
+            type: 'raster',
+            tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png'],
+            tileSize: 256,
+            attribution: '© OpenStreetMap contributors'
+          }
+        },
+        layers: [{ id: 'osm', type: 'raster', source: 'osm' }]
       },
-      layers: [{ id: 'osm', type: 'raster', source: 'osm' }]
-    },
-    center: [lng, lat],
-    zoom
-  });
+      center: [lng, lat],
+      zoom
+    });
 
-  // --- deck.gl instance (we update its layers when data changes) ---
-  let deckgl;
-  function setHeatmapLayer(data) {
-    deckgl.setProps({
-      layers: [
+    let deckgl;
+
+    function setLayers(data, showDebugDots = false) {
+      const layers = [
         new deck.HeatmapLayer({
           id: 'heat',
           data,
           getPosition: d => d.position, // [lng, lat]
           getWeight: d => d.weight ?? 1,
-          radiusPixels: 40,
-          intensity: 1,
-          threshold: 0.05,
-          opacity: 0.45
+          radiusPixels: 50,      // slightly larger for visibility
+          intensity: 1.2,        // bump intensity a bit
+          threshold: 0.03,       // lower threshold so faint clusters show
+          opacity: 0.5
         })
-      ]
-    });
-  }
+      ];
 
-  // Fetch points from API, with optional bbox
-  async function fetchPoints({useBounds = true} = {}) {
-    try {
-      let url = new URL('/points', api);
-      if (useBounds && map && map.getBounds) {
-        const b = map.getBounds();
-        // NOTE: your server expects minLong/maxLong, not minLng/maxLng
-        url.searchParams.set('minLong', b.getWest());
-        url.searchParams.set('minLat',  b.getSouth());
-        url.searchParams.set('maxLong', b.getEast());
-        url.searchParams.set('maxLat',  b.getNorth());
-        url.searchParams.set('limit', '10000');
+      if (showDebugDots) {
+        layers.push(
+          new deck.ScatterplotLayer({
+            id: 'debug-points',
+            data,
+            getPosition: d => d.position,
+            getRadius: 20,
+            radiusMinPixels: 2,
+            getFillColor: [0, 128, 255, 160]
+          })
+        );
       }
-      const resp = await fetch(url.toString(), { mode: 'cors' });
-      if (!resp.ok) throw new Error(`API ${resp.status}`);
-      const arr = await resp.json();
-      // Expecting [{position:[lng,lat]}]
-      if (!Array.isArray(arr)) throw new Error('Bad payload');
-      return arr;
-    } catch (e) {
-      console.warn('API fetch failed, falling back to hardcoded points', e);
-      return hardcodedPoints;
+
+      deckgl.setProps({ layers });
     }
-  }
 
-  // Simple debounce
-  function debounce(fn, wait=300) {
-    let t;
-    return (...args) => {
-      clearTimeout(t);
-      t = setTimeout(() => fn(...args), wait);
-    };
-  }
+    function getBoundsFromPoints(data) {
+      if (!data || !data.length) return null;
+      let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+      for (const d of data) {
+        const [x, y] = d.position || [];
+        if (Number.isFinite(x) && Number.isFinite(y)) {
+          if (x < minLng) minLng = x;
+          if (x > maxLng) maxLng = x;
+          if (y < minLat) minLat = y;
+          if (y > maxLat) maxLat = y;
+        }
+      }
+      if (!Number.isFinite(minLng) || !Number.isFinite(minLat) || !Number.isFinite(maxLng) || !Number.isFinite(maxLat)) {
+        return null;
+      }
+      return [[minLng, minLat], [maxLng, maxLat]];
+    }
 
-  map.on('load', async () => {
-    deckgl = new deck.DeckGL({
-      canvas: 'deck-canvas',
-      controller: true,
-      initialViewState: { longitude: lng, latitude: lat, zoom },
-      onViewStateChange: ({viewState}) => {
-        map.jumpTo({
-          center: [viewState.longitude, viewState.latitude],
-          zoom: viewState.zoom,
-          bearing: viewState.bearing,
-          pitch: viewState.pitch
+    // Fetch points from API. If useBounds=true, include current map bbox in query
+    async function fetchPoints({useBounds = true, limit = 10000} = {}) {
+      try {
+        let url = new URL('/points', api);
+        if (useBounds && map && map.getBounds) {
+          const b = map.getBounds();
+          // Server expects: minLong, minLat, maxLong, maxLat
+          url.searchParams.set('minLong', b.getWest());
+          url.searchParams.set('minLat',  b.getSouth());
+          url.searchParams.set('maxLong', b.getEast());
+          url.searchParams.set('maxLat',  b.getNorth());
+        }
+        url.searchParams.set('limit', String(limit));
+        const resp = await fetch(url.toString(), { mode: 'cors' });
+        if (!resp.ok) throw new Error(`API ${resp.status}`);
+        const arr = await resp.json();
+        if (!Array.isArray(arr)) throw new Error('Bad payload');
+        return arr;
+      } catch (e) {
+        console.warn('API fetch failed, falling back to hardcoded points', e);
+        return hardcodedPoints;
+      }
+    }
+
+    // Simple debounce
+    function debounce(fn, wait=300) {
+      let t;
+      return (...args) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn(...args), wait);
+      };
+    }
+
+    map.on('load', async () => {
+      deckgl = new deck.DeckGL({
+        canvas: 'deck-canvas',
+        controller: true,
+        initialViewState: { longitude: lng, latitude: lat, zoom },
+        onViewStateChange: ({viewState}) => {
+          map.jumpTo({
+            center: [viewState.longitude, viewState.latitude],
+            zoom: viewState.zoom,
+            bearing: viewState.bearing,
+            pitch: viewState.pitch
+          });
+        },
+        layers: []
+      });
+
+      // 1) First fetch WITHOUT bbox so we get the global dataset
+      const initialData = await fetchPoints({useBounds: false});
+      if (initialData.length === 0) {
+        console.warn('No data returned from API (or fallback).');
+      }
+      setLayers(initialData, /*showDebugDots=*/false);
+
+      // 2) Fit map to data bounds
+      const bounds = getBoundsFromPoints(initialData);
+      if (bounds) {
+        // Fit the MapLibre map
+        map.fitBounds(bounds, { padding: 60, animate: true, duration: 800 });
+        // Also sync the deck view (optional, but feels snappier)
+        const [[minLng, minLat], [maxLng, maxLat]] = bounds;
+        const centerLng = (minLng + maxLng) / 2;
+        const centerLat = (minLat + maxLat) / 2;
+        deckgl.setProps({
+          viewState: { longitude: centerLng, latitude: centerLat, zoom: map.getZoom(), bearing: 0, pitch: 0 }
         });
-      },
-      layers: []
+      }
+
+      // 3) Now that the camera is over the data, refresh on move with bbox
+      const refresh = debounce(async () => {
+        const d = await fetchPoints({useBounds: true});
+        setLayers(d, /*showDebugDots=*/false);
+      }, 350);
+
+      map.on('moveend', refresh);
     });
-
-    // Initial load
-    const data = await fetchPoints({useBounds: true});
-    setHeatmapLayer(data);
-
-    // Refresh on map move end (debounced)
-    map.on('moveend', debounce(async () => {
-      const d = await fetchPoints({useBounds: true});
-      setHeatmapLayer(d);
-    }, 400));
-  });
 </script>
 </body>
 </html>
