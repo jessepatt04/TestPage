@@ -65,20 +65,38 @@ app.get('/health', async (req, res) => {
 app.get('/points', async (req, res) => {
   const { minLong, minLat, maxLong, maxLat, limit } = req.query;
 
+  // --- inside app.get('/points', ...) ---
   // Build WHERE dynamically if bbox provided
   const clauses = [];
   const params = [];
 
   if ([minLong, minLat, maxLong, maxLat].every(v => v !== undefined)) {
-    clauses.push(`${LONG} BETWEEN $1 AND $3 AND ${LAT} BETWEEN $2 AND $4`);
+    // We'll apply this WHERE to the final SELECT after we extracted numbers
+    clauses.push(`long BETWEEN $1 AND $3 AND lat BETWEEN $2 AND $4`);
     params.push(Number(minLong), Number(minLat), Number(maxLong), Number(maxLat));
   }
 
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const lim = Number(limit) > 0 && Number(limit) <= 100000 ? `LIMIT ${Number(limit)}` : '';
 
-  const sql = `SELECT ${LONG} AS long, ${LAT} AS lat
-               FROM ${TABLE} ${where} ${lim}`;
+  const sql = `
+    WITH pts AS (
+      SELECT
+        (lo.val)::float AS long,
+        (la.val)::float AS lat
+      FROM ${TABLE} d
+      -- explode "long" array and keep the index
+      CROSS JOIN LATERAL jsonb_array_elements_text(d.${LONG}) WITH ORDINALITY AS lo(val, ord)
+      -- explode "lat" array and keep the index
+      CROSS JOIN LATERAL jsonb_array_elements_text(d.${LAT})  WITH ORDINALITY AS la(val, ord2)
+      -- zip long[i] with lat[i] by matching ordinals
+      WHERE lo.ord = la.ord
+    )
+    SELECT long, lat
+    FROM pts
+    ${where}
+    ${lim};
+  `;
 
   try {
     const result = await pool.query(sql, params);
@@ -90,7 +108,7 @@ app.get('/points', async (req, res) => {
     console.error('Error querying points:', err);
     res.status(500).json({ error: 'DB query failed', detail: String(err) });
   }
-});
+
 
 // Fallback
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
