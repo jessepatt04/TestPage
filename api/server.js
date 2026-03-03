@@ -88,9 +88,7 @@ app.get('/points', async (req, res) => {
       WHERE lo.ord = la.ord2
     )
     SELECT long, lat
-    FROM pts
-    ${where}
-    ${lim};
+    FROM pts;
   `;
 
   console.log("------------------------------------------------");
