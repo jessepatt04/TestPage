@@ -14,7 +14,6 @@
 </head>
 <body>
 <div id="map"></div>
-<canvas id="deck-canvas" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none;"></canvas>
 
 <script>
     function getParams() {
@@ -43,10 +42,16 @@
         layers: [{ id: 'osm', type: 'raster', source: 'osm' }]
       },
       center: [lng, lat],
-      zoom
+      zoom,
+      dragPan: true,
+      scrollZoom: true
     });
 
-    let deckgl;
+    // Add zoom / rotation controls for easier interaction
+    map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+    // deck.gl overlay that stays in sync with the MapLibre camera
+    let deckOverlay;
 
     // Helper: compute bounds from [{position:[lng,lat]}]
     function getBoundsFromPoints(data) {
@@ -116,31 +121,23 @@
           getFillColor: [0, 128, 255, 200]
         })
       ];
-      deckgl.setProps({ layers });
+
+      if (deckOverlay) {
+        deckOverlay.setProps({ layers });
+      }
     }
 
     map.on('load', async () => {
-      deckgl = new deck.DeckGL({
-        canvas: 'deck-canvas',
-        controller: true,
-        // Ensure the canvas is drawn crisp and above the map
-        useDevicePixels: window.devicePixelRatio || 1,
-        onViewStateChange: ({viewState}) => {
-          map.jumpTo({
-            center: [viewState.longitude, viewState.latitude],
-            zoom: viewState.zoom,
-            bearing: viewState.bearing,
-            pitch: viewState.pitch
-          });
-        },
-        initialViewState: { longitude: lng, latitude: lat, zoom },
+      // Create deck.gl overlay bound to the MapLibre map
+      deckOverlay = new deck.MapboxOverlay({
+        interleaved: true,
         layers: []
       });
+      map.addControl(deckOverlay);
 
       const data = await fetchPointsNoBbox(300000);
 
-      // If you have only a handful of points, heat can look flat at wide zoom.
-      // Auto-fit the camera to your points.
+      // Auto-fit the camera to your points so panning/zooming starts from a good view
       const bounds = getBoundsFromPoints(data);
       if (bounds) {
         console.log('[CLIENT] fitting to bounds', bounds);
