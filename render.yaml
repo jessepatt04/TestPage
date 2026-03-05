@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: heatmap-api
+    runtime: docker
+
+    # Path to your Dockerfile (Render does NOT use docker-compose build contexts)
+    dockerfilePath: ./api/Dockerfile
+
+    # What port your service listens on
+    envVars:
+      - key: PORT
+        value: "3000"
+
+      # Database envs from your compose file
+      - key: PGHOST
+        value: host.docker.internal
+      - key: PGPORT
+        value: "5432"
+      - key: PGDATABASE
+        value: postgres
+      - key: PGUSER
+        value: jesse
+      - key: PGPASSWORD
+        value: jesse
+
+      # App settings from compose
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: TABLE_NAME
+        value: public.dexter
+      - key: LAT_COLUMN
+        value: lat
+      - key: LONG_COLUMN
+        value: long
