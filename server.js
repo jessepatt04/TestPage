@@ -74,7 +74,7 @@ app.get('/points', async (req, res) => {
   }
 
   const lim =
-    Number(limit) > 0 && Number(limit) <= 100000 ? `LIMIT ${Number(limit)}` : '';
+    Number(limit) > 0 && Number(limit) <= 300000 ? `LIMIT ${Number(limit)}` : '';
 
   const sql = `
     WITH exploded AS (
